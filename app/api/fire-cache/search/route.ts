@@ -16,13 +16,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Query is required' }, { status: 400 })
     }
 
-    const firecrawlApiKey = process.env.FIRECRAWL_API_KEY
     const openaiApiKey = process.env.OPENAI_API_KEY
-    
-    if (!firecrawlApiKey) {
-      return NextResponse.json({ error: 'Firecrawl API key not configured' }, { status: 500 })
-    }
-    
+    // The new Python service URL, should be an environment variable
+    const crawl4aiServiceUrl = process.env.CRAWL4AI_SERVICE_URL || 'http://localhost:8008/search';
+
     if (!openaiApiKey) {
       return NextResponse.json({ error: 'OpenAI API key not configured' }, { status: 500 })
     }
@@ -56,57 +53,43 @@ export async function POST(request: Request) {
           // Always search for sources to ensure fresh, relevant results
           dataStream.writeData({ type: 'status', message: 'Starting search...' })
           dataStream.writeData({ type: 'status', message: 'Searching for relevant sources...' })
-            
-            const response = await fetch('https://api.firecrawl.dev/v1/search', {
+
+          // Call the new Python backend service
+          const response = await fetch(crawl4aiServiceUrl, {
             method: 'POST',
             headers: {
-              'Authorization': `Bearer ${firecrawlApiKey}`,
               'Content-Type': 'application/json',
+              'X-Request-ID': requestId // Pass request ID for tracing
             },
             body: JSON.stringify({
               query,
-              limit: 10,
-              scrapeOptions: {
-                formats: ['markdown'],
-                maxAge: 6048000
-              }
+              limit: 5, // The Python service defaults to 5, but we can set it. Let's use a moderate number.
+                        // This 'limit' now refers to the number of search results to process from Serper.
             }),
           })
 
           if (!response.ok) {
-            throw new Error(`Firecrawl API error: ${response.statusText}`)
+            const errorBody = await response.text();
+            console.error(`[${requestId}] crawl4ai-service error: ${response.statusText}`, errorBody)
+            throw new Error(`Search and scrape service error: ${response.statusText} - ${errorBody}`)
           }
 
-          const searchData = await response.json()
+          // The new service should return data in the format we expect for `sources`
+          // It returns a list of Source objects directly
+          const fetchedSources = await response.json()
           
-          // Transform sources metadata
-          sources = searchData.data?.map((item: {
-            url: string
-            title?: string
-            description?: string
-            content?: string
-            markdown?: string
-            publishedDate?: string
-            author?: string
-            metadata?: {
-              ogImage?: string
-              image?: string
-              favicon?: string
-              siteName?: string
-              description?: string
-              [key: string]: unknown
-            }
-          }) => ({
+          sources = fetchedSources.map((item: any) => ({
             url: item.url,
-            title: item.title || item.url,
-            description: item.description || item.metadata?.description,
+            title: item.title || item.url, // Fallback title to URL if not present
+            description: item.description,
+            // The python service returns 'content' and 'markdown' as the same (fit_markdown)
             content: item.content,
             markdown: item.markdown,
             publishedDate: item.publishedDate,
             author: item.author,
-            image: item.metadata?.ogImage || item.metadata?.image,
-            favicon: item.metadata?.favicon,
-            siteName: item.metadata?.siteName,
+            image: item.image,
+            favicon: item.favicon,
+            siteName: item.siteName,
           })) || []
 
           // Send sources immediately

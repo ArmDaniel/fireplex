@@ -1,0 +1,5 @@
+fastapi
+uvicorn[standard]
+crawl4ai
+requests
+python-dotenv

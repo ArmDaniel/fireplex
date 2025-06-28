@@ -26,11 +26,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Query is required' }, { status: 400 })
     }
 
-    // API key validation
-    const firecrawlApiKey = body.firecrawlApiKey || process.env.FIRECRAWL_API_KEY
-    if (!firecrawlApiKey) {
-      return NextResponse.json({ error: 'Firecrawl API key not configured' }, { status: 500 })
-    }
+    // The new Python service URL, should be an environment variable
+    const crawl4aiServiceUrl = process.env.CRAWL4AI_SERVICE_URL || 'http://localhost:8008/search';
+    // Firecrawl API key is no longer directly used here for search, but might be kept if other Firecrawl features were planned
+    // For this replacement, we are removing the direct dependency on firecrawlApiKey for the search flow.
+    // If firecrawlApiKey from body was intended for other uses, that logic would need to be preserved.
+    // Assuming it was only for FirecrawlApp({ apiKey: firecrawlApiKey }) for search.
 
     let llmProvider: OpenAIProvider
     let modelName: string = 'gpt-4o-mini' // Default OpenAI model
@@ -58,8 +59,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid provider specified' }, { status: 400 })
     }
 
-    // Initialize Firecrawl
-    const firecrawl = new FirecrawlApp({ apiKey: firecrawlApiKey })
+    // FirecrawlApp is no longer initialized here for search.
+    // const firecrawl = new FirecrawlApp({ apiKey: firecrawlApiKey })
 
     // Always perform a fresh search for each query to ensure relevant results
     const isFollowUp = messages.length > 2
@@ -85,28 +86,42 @@ export async function POST(request: Request) {
           // Always search for sources to ensure fresh, relevant results
           dataStream.writeData({ type: 'status', message: 'Starting search...' })
           dataStream.writeData({ type: 'status', message: 'Searching for relevant sources...' })
-            
-          const searchData = await firecrawl.search(query, {
-            limit: 6,
-            scrapeOptions: {
-              formats: ['markdown'],
-              onlyMainContent: true
-            }
+
+          // Call the new Python backend service
+          const searchServiceResponse = await fetch(crawl4aiServiceUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Request-ID': requestId // Pass request ID for tracing
+            },
+            body: JSON.stringify({
+              query,
+              limit: 6, // Match the previous limit used with Firecrawl
+            }),
           })
+
+          if (!searchServiceResponse.ok) {
+            const errorBody = await searchServiceResponse.text();
+            console.error(`[${requestId}] crawl4ai-service error: ${searchServiceResponse.statusText}`, errorBody)
+            throw new Error(`Search and scrape service error: ${searchServiceResponse.statusText} - ${errorBody}`)
+          }
           
-          // Transform sources metadata
-          sources = searchData.data?.map((item: any) => ({
+          const fetchedSources = await searchServiceResponse.json()
+
+          // Transform sources metadata - assuming Python service returns fields as defined in its Source model
+          sources = fetchedSources.map((item: any) => ({
             url: item.url,
-            title: item.title || item.url,
-            description: item.description || item.metadata?.description,
-            content: item.content,
+            title: item.title || item.url, // Fallback title to URL
+            description: item.description,
+            content: item.content, // Python service provides 'content' and 'markdown' as same (fit_markdown)
             markdown: item.markdown,
             publishedDate: item.publishedDate,
             author: item.author,
-            image: item.metadata?.ogImage || item.metadata?.image,
-            favicon: item.metadata?.favicon,
-            siteName: item.metadata?.siteName,
+            image: item.image,
+            favicon: item.favicon,
+            siteName: item.siteName,
           })).filter((item: any) => item.url) || []
+
 
           // Send sources immediately
           dataStream.writeData({ type: 'sources', sources })
