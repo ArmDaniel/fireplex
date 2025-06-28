@@ -102,7 +102,7 @@ export function MarkdownRenderer({ content, sources }: MarkdownRendererProps) {
           code: ({ children, ...props }) => {
             const inline = !('className' in props && props.className?.includes('language-'))
             return inline ? (
-              <code className="px-1.5 py-0.5 bg-gray-100 dark:bg-zinc-800 rounded text-sm">{children}</code>
+              <code className="px-1.5 py-0.5 bg-gray-100 rounded text-sm">{children}</code>
             ) : (
               <code>{children}</code>
             )
