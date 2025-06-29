@@ -124,7 +124,8 @@ async def scrape_url(crawler: AsyncWebCrawler, url: str, config: CrawlerRunConfi
         logger.info(f"[{request_id}] Starting crawl for URL: {url}")
         result = await crawler.arun(url=url, config=config)
 
-        if result and result.status == "completed" and result.markdown:
+        # Corrected condition: check result.success (boolean) instead of result.status
+        if result and result.success and result.markdown:
             markdown_content = result.markdown.fit_markdown if result.markdown.fit_markdown else result.markdown.raw_markdown
 
             # Extract metadata. crawl4ai's metadata field is a dict.
@@ -171,7 +172,15 @@ async def scrape_url(crawler: AsyncWebCrawler, url: str, config: CrawlerRunConfi
                 siteName=site_name
             )
         else:
-            logger.warning(f"[{request_id}] Failed to scrape or no markdown content for URL: {url}. Status: {result.status if result else 'N/A'}")
+            # Log failure reason more accurately
+            if result and not result.success:
+                logger.warning(f"[{request_id}] Crawl was not successful for URL: {url}. Error: {result.error_message or 'Unknown error'}")
+            elif not result:
+                 logger.warning(f"[{request_id}] No result returned from crawl for URL: {url}")
+            elif not result.markdown:
+                 logger.warning(f"[{request_id}] Crawl successful but no markdown content for URL: {url}")
+            else:
+                 logger.warning(f"[{request_id}] Failed to process URL: {url} for unknown reason.")
             return None
     except Exception as e:
         logger.error(f"[{request_id}] Exception during scraping URL {url}: {e}", exc_info=True)
